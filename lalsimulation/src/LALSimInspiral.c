@@ -150,6 +150,7 @@ static const char *lalSimulationApproximantNames[] = {
     INITIALIZE_NAME(IMRPhenomD_NRTidal),
     INITIALIZE_NAME(IMRPhenomP),
     INITIALIZE_NAME(IMRPhenomPv2),
+    INITIALIZE_NAME(IMRPhenomPv2_NRTidal),
     INITIALIZE_NAME(IMRPhenomFC),
     INITIALIZE_NAME(TaylorEt),
     INITIALIZE_NAME(TaylorT4),
@@ -270,145 +271,10 @@ static double fixReferenceFrequency(const double f_ref, const double f_min, cons
         case SpinTaylorF2:
         case IMRPhenomP:
         case IMRPhenomPv2:
-        case NRSur4d2s:
             return f_min;
-        default:
-            break;
-        }
-    return f_ref;
-}
-
-/*
- * some helper routines for XLALSimInspiralTD
- */
-static int XLALSimInspiralTDFromTD(REAL8TimeSeries **hplus, REAL8TimeSeries **hcross, REAL8 m1, REAL8 m2, REAL8 S1x, REAL8 S1y, REAL8 S1z, REAL8 S2x, REAL8 S2y, REAL8 S2z, REAL8 distance, REAL8 inclination, REAL8 phiRef, REAL8 longAscNodes, REAL8 eccentricity, REAL8 meanPerAno, REAL8 deltaT, REAL8 f_min, REAL8 f_ref, LALDict *LALparams, Approximant approximant);
-static int XLALSimInspiralTDFromFD(REAL8TimeSeries **hplus, REAL8TimeSeries **hcross, REAL8 m1, REAL8 m2, REAL8 S1x, REAL8 S1y, REAL8 S1z, REAL8 S2x, REAL8 S2y, REAL8 S2z, REAL8 distance, REAL8 inclination, REAL8 phiRef, REAL8 longAscNodes, REAL8 eccentricity, REAL8 meanPerAno, REAL8 deltaT, REAL8 f_min, REAL8 f_ref, LALDict *LALparams, Approximant approximant);
-
-/**
- * @addtogroup LALSimInspiral_c
- * @brief General routines for generating binary inspiral waveforms.
- *
- * @{
- */
-
-/**
- * @name General Waveform Switching Generation Routines
- * @{
- */
-
-/**
- * Chooses between different approximants when requesting a waveform to be generated
- * For spinning waveforms, all known spin effects up to given PN order are included
- * Returns the waveform in the time domain.
- *
- * The parameters passed must be in SI units.
- */
-int XLALSimInspiralChooseTDWaveform(
-    REAL8TimeSeries **hplus,                    /**< +-polarization waveform */
-    REAL8TimeSeries **hcross,                   /**< x-polarization waveform */
-    const REAL8 m1,                             /**< mass of companion 1 (kg) */
-    const REAL8 m2,                             /**< mass of companion 2 (kg) */
-    const REAL8 S1x,                            /**< x-component of the dimensionless spin of object 1 */
-    const REAL8 S1y,                            /**< y-component of the dimensionless spin of object 1 */
-    const REAL8 S1z,                            /**< z-component of the dimensionless spin of object 1 */
-    const REAL8 S2x,                            /**< x-component of the dimensionless spin of object 2 */
-    const REAL8 S2y,                            /**< y-component of the dimensionless spin of object 2 */
-    const REAL8 S2z,                            /**< z-component of the dimensionless spin of object 2 */
-    const REAL8 distance,                       /**< distance of source (m) */
-    const REAL8 inclination,                    /**< inclination of source (rad) */
-    const REAL8 phiRef,                         /**< reference orbital phase (rad) */
-    const REAL8 longAscNodes,                   /**< longitude of ascending nodes, degenerate with the polarization angle, Omega in documentation */
-    const REAL8 eccentricity,                   /**< eccentrocity at reference epoch */
-    const REAL8 UNUSED meanPerAno,              /**< mean anomaly of periastron */
-    const REAL8 deltaT,                         /**< sampling interval (s) */
-    const REAL8 f_min,                          /**< starting GW frequency (Hz) */
-    REAL8 f_ref,                                /**< reference GW frequency (Hz) */
-    LALDict *LALparams,                         /**< LAL dictionary containing accessory parameters */
-    const Approximant approximant               /**< post-Newtonian approximant to use for waveform production */
-    )
-{
-    REAL8 LNhatx, LNhaty, LNhatz, E1x, E1y, E1z;
-    //REAL8 tmp1, tmp2;
-    int ret;
-    /* N.B. the quadrupole of a spinning compact body labeled by A is
-     * Q_A = - quadparam_A chi_A^2 m_A^3 (see gr-qc/9709032)
-     * where quadparam = 1 for BH ~= 4-8 for NS.
-     * This affects the quadrupole-monopole interaction.
-     */
-    REAL8 v0 = 1.;
-    REAL8 quadparam1 = 1.+XLALSimInspiralWaveformParamsLookupdQuadMon1(LALparams);
-    REAL8 quadparam2 = 1.+XLALSimInspiralWaveformParamsLookupdQuadMon2(LALparams);
-    REAL8 lambda1 = XLALSimInspiralWaveformParamsLookupTidalLambda1(LALparams);
-    REAL8 lambda2 = XLALSimInspiralWaveformParamsLookupTidalLambda2(LALparams);
-    int amplitudeO = XLALSimInspiralWaveformParamsLookupPNAmplitudeOrder(LALparams);
-    int phaseO =XLALSimInspiralWaveformParamsLookupPNPhaseOrder(LALparams);
-    REAL8 lambda3A_UR = 0.;
-    REAL8 omega2TidalA_UR = 0.;
-    REAL8 omega3TidalA_UR = 0.;
-    REAL8 lambda3B_UR = 0.;
-    REAL8 omega2TidalB_UR = 0.;
-    REAL8 omega3TidalB_UR = 0.;
-
-    /* General sanity checks that will abort
-     *
-     * If non-GR approximants are added, include them in
-     * XLALSimInspiralApproximantAcceptTestGRParams()
-     */
-    if( !XLALSimInspiralWaveformParamsNonGRAreDefault(LALparams) && XLALSimInspiralApproximantAcceptTestGRParams(approximant) != LAL_SIM_INSPIRAL_TESTGR_PARAMS ) {
-        XLALPrintError("XLAL Error - %s: Passed in non-NULL pointer to LALSimInspiralTestGRParam for an approximant that does not use LALSimInspiralTestGRParam\n", __func__);
-        XLAL_ERROR(XLAL_EINVAL);
-    }
-    /* Support variables for precessing wfs*/
-    REAL8 incl;
-
-
-    /* SEOBNR flag for spin aligned model version. 1 for SEOBNRv1, 2 for SEOBNRv2 */
-    UINT4 SpinAlignedEOBversion;
-    REAL8 spin1x,spin1y,spin1z;
-    REAL8 spin2x,spin2y,spin2z;
-    REAL8 polariz=longAscNodes;
-
-    /* SEOBNR flag for precessing model version. 3 for SEOBNRv3, 300 for SEOBNRv3_opt */
-    UINT4 PrecEOBversion;
-    REAL8 spin1[3], spin2[3];
-
-    //LIGOTimeGPS epoch = LIGOTIMEGPSZERO;
-
-    /* General sanity check the input parameters - only give warnings! */
-    if( deltaT > 1. )
-        XLALPrintWarning("XLAL Warning - %s: Large value of deltaT = %e requested.\nPerhaps sample rate and time step size were swapped?\n", __func__, deltaT);
-    if( deltaT < 1./16385. )
-        XLALPrintWarning("XLAL Warning - %s: Small value of deltaT = %e requested.\nCheck for errors, this could create very large time series.\n", __func__, deltaT);
-    if( m1 < 0.09 * LAL_MSUN_SI )
-        XLALPrintWarning("XLAL Warning - %s: Small value of m1 = %e (kg) = %e (Msun) requested.\nPerhaps you have a unit conversion error?\n", __func__, m1, m1/LAL_MSUN_SI);
-    if( m2 < 0.09 * LAL_MSUN_SI )
-        XLALPrintWarning("XLAL Warning - %s: Small value of m2 = %e (kg) = %e (Msun) requested.\nPerhaps you have a unit conversion error?\n", __func__, m2, m2/LAL_MSUN_SI);
-    if( m1 + m2 > 1000. * LAL_MSUN_SI )
-        XLALPrintWarning("XLAL Warning - %s: Large value of total mass m1+m2 = %e (kg) = %e (Msun) requested.\nSignal not likely to be in band of ground-based detectors.\n", __func__, m1+m2, (m1+m2)/LAL_MSUN_SI);
-    if( S1x*S1x + S1y*S1y + S1z*S1z > 1.000001 )
-        XLALPrintWarning("XLAL Warning - %s: S1 = (%e,%e,%e) with norm > 1 requested.\nAre you sure you want to violate the Kerr bound?\n", __func__, S1x, S1y, S1z);
-    if( S2x*S2x + S2y*S2y + S2z*S2z > 1.000001 )
-        XLALPrintWarning("XLAL Warning - %s: S2 = (%e,%e,%e) with norm > 1 requested.\nAre you sure you want to violate the Kerr bound?\n", __func__, S2x, S2y, S2z);
-    if( f_min < 1. )
-        XLALPrintWarning("XLAL Warning - %s: Small value of fmin = %e requested.\nCheck for errors, this could create a very long waveform.\n", __func__, f_min);
-    if( f_min > 40.000001 )
-        XLALPrintWarning("XLAL Warning - %s: Large value of fmin = %e requested.\nCheck for errors, the signal will start in band.\n", __func__, f_min);
-
-    /* adjust the reference frequency for certain precessing approximants:
-     * if that approximate interprets f_ref==0 to be f_min, set f_ref=f_min;
-     * otherwise do nothing */
-    f_ref = fixReferenceFrequency(f_ref, f_min, approximant);
-
-    switch (approximant)
-    {
-        /* non-spinning inspiral-only models */
-        case TaylorEt:
-            /* Waveform-specific sanity checks */
-            if( !XLALSimInspiralWaveformParamsFlagsAreDefault(LALparams) )
-                ABORT_NONDEFAULT_LALDICT_FLAGS(LALparams);
-            if( !checkSpinsZero(S1x, S1y, S1z, S2x, S2y, S2z) )
-                ABORT_NONZERO_SPINS(LALparams);
-            if( !checkTidesZero(lambda1, lambda2) )
+        case IMRPhenomPv2_NRTidal:
+            return f_min;
+        if( !checkTidesZero(lambda1, lambda2) )
                 ABORT_NONZERO_TIDES(LALparams);
             if( f_ref != 0.)
                 XLALPrintWarning("XLAL Warning - %s: This approximant does use f_ref. The reference phase will be defined at coalescence.\n", __func__);
@@ -1230,8 +1096,10 @@ int XLALSimInspiralChooseFDWaveform(
                 ABORT_NONDEFAULT_LALDICT_FLAGS(LALparams);
             if( !checkTransverseSpinsZero(S1x, S1y, S2x, S2y) )
                 ABORT_NONZERO_TRANSVERSE_SPINS(LALparams);
-            if( !checkTidesZero(lambda1, lambda2) )
+            /* if( !checkTidesZero(lambda1, lambda2) )
                 ABORT_NONZERO_TIDES(LALparams);
+            //if( !checkTidesZero(lambda1, lambda2) )
+                //ABORT_NONZERO_TIDES(LALparams);
             /* Call the waveform driver routine */
             ret = XLALSimIMRPhenomDGenerateFD(hptilde, phiRef, f_ref, deltaF, m1, m2,
                   S1z, S2z, f_min, f_max, distance, LALparams);
@@ -1457,6 +1325,27 @@ int XLALSimInspiralChooseFDWaveform(
                 (*hptilde)->data->data[idx] =cos(2.*zeta_polariz)*PhPpolp+sin(2.*zeta_polariz)*PhPpolc;
                 (*hctilde)->data->data[idx]=cos(2.*zeta_polariz)*PhPpolc-sin(2.*zeta_polariz)*PhPpolp;
             }
+            break;
+
+        case IMRPhenomPv2_NRTidal:
+            /* Waveform-specific sanity checks */
+            spin1[0]=S1x; spin1[1]=S1y; spin1[2]=S1z;
+            spin2[0]=S2x; spin2[1]=S2y; spin2[2]=S2z;
+            iTmp=i;
+            XLALSimInspiralInitialConditionsPrecessingApproxs(&i,&S1x,&S1y,&S1z,&S2x,&S2y,&S2z,iTmp,spin1[0],spin1[1],spin1[2],spin2[0],spin2[1],spin2[2],m1,m2,f_ref,XLALSimInspiralGetFrameAxis(LALparams));
+            if( !XLALSimInspiralModesChoiceIsDefault(          /* Default is (2,2) or l=2 modes. */
+                    XLALSimInspiralGetModesChoice(LALparams) ) )
+                ABORT_NONDEFAULT_MODES_CHOICE(LALparams);
+            LNhatx = sin(i);
+            LNhaty = 0.;
+            LNhatz = cos(i);
+            /* Tranform to model parameters */
+            if(f_ref==0.0)
+                f_ref = f_min; /* Default reference frequency is minimum frequency */
+            ret = XLALSimIMRPhenomPv2NRTidal(hptilde, hctilde,
+              chi1_l, chi2_l, chip, thetaJ, alpha0, LNhatx, LNhaty, LNhatz, S1x, S1y, S1z, S2x, S2y, S2z,
+              m1, m2, r, lambda1, lambda2, quadparam1, quadparam2, phiRef, deltaF, f_min, f_max, f_ref, IMRPhenomPv2_V, nonGRparams);
+            if (ret == XLAL_FAILURE) XLAL_ERROR(XLAL_EFUNC);
             break;
 
         case SpinTaylorT4Fourier:
@@ -4560,6 +4449,7 @@ int XLALSimInspiralImplementedFDApproximants(
         case IMRPhenomD_NRTidal:
         case IMRPhenomP:
         case IMRPhenomPv2:
+        case IMRPhenomPv2_NRTidal:
         case EOBNRv2_ROM:
         case EOBNRv2HM_ROM:
         case SEOBNRv1_ROM_EffectiveSpin:
@@ -5121,6 +5011,9 @@ int XLALSimInspiralApproximantAcceptTestGRParams(Approximant approx){
     case IMRPhenomD:
     case IMRPhenomP:
     case IMRPhenomPv2:
+      testGR_accept=LAL_SIM_INSPIRAL_TESTGR_PARAMS;
+      break;
+    case IMRPhenomPv2_NRTidal:
       testGR_accept=LAL_SIM_INSPIRAL_TESTGR_PARAMS;
       break;
     default:
