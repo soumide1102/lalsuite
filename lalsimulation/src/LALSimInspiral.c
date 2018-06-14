@@ -274,14 +274,134 @@ static double fixReferenceFrequency(const double f_ref, const double f_min, cons
             return f_min;
         case IMRPhenomPv2_NRTidal:
             return f_min;
-        if( !checkTidesZero(lambda1, lambda2) )
-                ABORT_NONZERO_TIDES(LALparams);
+        default:
+            break;
+        }
+    return f_ref;
+}
+ 
+/*
+ *   * some helper routines for XLALSimInspiralTD
+ *     */
+static int XLALSimInspiralTDFromTD(REAL8TimeSeries **hplus, REAL8TimeSeries **hcross, REAL8 phiRef, REAL8 deltaT, REAL8 m1, REAL8 m2, REAL8 S1x, REAL8 S1y, REAL8 S1z, REAL8 S2x, REAL8 S2y, REAL8 S2z, REAL8 f_min, REAL8 f_ref, REAL8 r, REAL8 z, REAL8 i, REAL8 lambda1, REAL8 lambda2, LALSimInspiralWaveformFlags *waveFlags, LALSimInspiralTestGRParam *nonGRparams, int amplitudeO, int phaseO, Approximant approximant);
+static int XLALSimInspiralTDFromFD(REAL8TimeSeries **hplus, REAL8TimeSeries **hcross, REAL8 phiRef, REAL8 deltaT, REAL8 m1, REAL8 m2, REAL8 S1x, REAL8 S1y, REAL8 S1z, REAL8 S2x, REAL8 S2y, REAL8 S2z, REAL8 f_min, REAL8 f_ref, REAL8 r, REAL8 z, REAL8 i, REAL8 lambda1, REAL8 lambda2, LALSimInspiralWaveformFlags *waveFlags, LALSimInspiralTestGRParam *nonGRparams, int amplitudeO, int phaseO, Approximant approximant);
+ 
+ 
+/**
+ * @addtogroup LALSimInspiral_c
+ * @brief General routines for generating binary inspiral waveforms.
+ * 
+ * @{
+ */
+ 
+ /**
+  * @name General Waveform Switching Generation Routines
+  * @{
+  */
+ 
+ /**
+  * Chooses between different approximants when requesting a waveform to be generated
+  * For spinning waveforms, all known spin effects up to given PN order are included
+  * Returns the waveform in the time domain.
+  
+  * The parameters passed must be in SI units.
+  */
+int XLALSimInspiralChooseTDWaveform(
+    REAL8TimeSeries **hplus,                    /**< +-polarization waveform */
+    REAL8TimeSeries **hcross,                   /**< x-polarization waveform */
+    REAL8 phiRef,                               /**< reference orbital phase (rad) */
+    REAL8 deltaT,                               /**< sampling interval (s) */
+    REAL8 m1,                                   /**< mass of companion 1 (kg) */
+    REAL8 m2,                                   /**< mass of companion 2 (kg) */
+    REAL8 S1x,                                  /**< x-component of the dimensionless spin of object 1 */
+    REAL8 S1y,                                  /**< y-component of the dimensionless spin of object 1 */
+    REAL8 S1z,                                  /**< z-component of the dimensionless spin of object 1 */
+    REAL8 S2x,                                  /**< x-component of the dimensionless spin of object 2 */
+    REAL8 S2y,                                  /**< y-component of the dimensionless spin of object 2 */
+    REAL8 S2z,                                  /**< z-component of the dimensionless spin of object 2 */
+    REAL8 f_min,                                /**< starting GW frequency (Hz) */
+    REAL8 f_ref,                                /**< reference GW frequency (Hz) */
+    REAL8 r,                                    /**< distance of source (m) */
+    REAL8 i,                                    /**< inclination of source (rad) */
+    REAL8 lambda1,                              /**< (tidal deformability of mass 1) / m1^5 (dimensionless) */
+    REAL8 lambda2,                              /**< (tidal deformability of mass 2) / m2^5 (dimensionless) */
+    LALSimInspiralWaveformFlags *waveFlags,     /**< Set of flags to control special behavior of some waveform families. Pass in NULL (or None in python) for default flags */
+    LALSimInspiralTestGRParam *nonGRparams, 	/**< Linked list of non-GR parameters. Pass in NULL (or None in python) for standard GR waveforms */
+    int amplitudeO,                             /**< twice post-Newtonian amplitude order */
+    int phaseO,                                 /**< twice post-Newtonian order */
+    Approximant approximant                     /**< post-Newtonian approximant to use for waveform production */
+    )
+{
+    REAL8 LNhatx, LNhaty, LNhatz, E1x, E1y, E1z;
+    char* numrel_data_path;
+    //REAL8 tmp1, tmp2;
+    int ret;
+    /* N.B. the quadrupole of a spinning compact body labeled by A is
+     * Q_A = - quadparam_A chi_A^2 m_A^3 (see gr-qc/9709032)
+     * where quadparam = 1 for BH ~= 4-8 for NS.
+     * This affects the quadrupole-monopole interaction.
+     * For now, hardcode quadparam1,2 = 1.
+     * Will later add ability to set via LALSimInspiralTestGRParam
+     */
+    REAL8 v0 = 1., quadparam1 = 1., quadparam2 = 1.;
+    quadparam1 = XLALSimInspiralEOSQfromLambda(lambda1);
+    quadparam2 = XLALSimInspiralEOSQfromLambda(lambda2);
+     //                                                              
+     /* General sanity checks that will abort
+     * If non-GR approximants are added, include them in
+     * XLALSimInspiralApproximantAcceptTestGRParams()
+     */
+    if( nonGRparams && XLALSimInspiralApproximantAcceptTestGRParams(approximant) != LAL_SIM_INSPIRAL_TESTGR_PARAMS )
+    {
+        XLALPrintError("XLAL Error - %s: Passed in non-NULL pointer to LALSimInspiralTestGRParam for an approximant that does not use LALSimInspiralTestGRParam\n", __func__);
+        XLAL_ERROR(XLAL_EINVAL);
+    }
+    REAL8 iTmp;
+    UINT4 SpinAlignedEOBversion;
+    REAL8 spin1[3], spin2[3];
+    
+    if( deltaT > 1. )
+        XLALPrintWarning("XLAL Warning - %s: Large value of deltaT = %e requested.\nPerhaps sample rate and time step size were swapped?\n", __func__, deltaT);
+    if( deltaT < 1./16385. )
+        XLALPrintWarning("XLAL Warning - %s: Small value of deltaT = %e requested.\nCheck for errors, this could create very large time series.\n", __func__, deltaT);
+    if( m1 < 0.09 * LAL_MSUN_SI )
+        XLALPrintWarning("XLAL Warning - %s: Small value of m1 = %e (kg) = %e (Msun) requested.\nPerhaps you have a unit conversion error?\n", __func__, m1, m1/LAL_MSUN_SI);
+    if( m2 < 0.09 * LAL_MSUN_SI )
+        XLALPrintWarning("XLAL Warning - %s: Small value of m2 = %e (kg) = %e (Msun) requested.\nPerhaps you have a unit conversion error?\n", __func__, m2, m2/LAL_MSUN_SI);
+    if( m1 + m2 > 1000. * LAL_MSUN_SI )
+        XLALPrintWarning("XLAL Warning - %s: Large value of total mass m1+m2 = %e (kg) = %e (Msun) requested.\nSignal not likely to be in band of ground-based detectors.\n", __func__, m1+m2, (m1+m2)/LAL_MSUN_SI);
+    if( S1x*S1x + S1y*S1y + S1z*S1z > 1.000001 )
+        XLALPrintWarning("XLAL Warning - %s: S1 = (%e,%e,%e) with norm > 1 requested.\nAre you sure you want to violate the Kerr bound?\n", __func__, S1x, S1y, S1z);
+    if( S2x*S2x + S2y*S2y + S2z*S2z > 1.000001 )
+        XLALPrintWarning("XLAL Warning - %s: S2 = (%e,%e,%e) with norm > 1 requested.\nAre you sure you want to violate the Kerr bound?\n", __func__, S2x, S2y, S2z);
+    if( f_min < 1. )
+        XLALPrintWarning("XLAL Warning - %s: Small value of fmin = %e requested.\nCheck for errors, this could create a very long waveform.\n", __func__, f_min);
+    if( f_min > 40.000001 )
+        XLALPrintWarning("XLAL Warning - %s: Large value of fmin = %e requested.\nCheck for errors, the signal will start in band.\n", __func__, f_min);
+ 
+    /* adjust the reference frequency for certain precessing approximants:
+ *       * if that approximate interprets f_ref==0 to be f_min, set f_ref=f_min;
+ *             * otherwise do nothing */
+    f_ref = fixReferenceFrequency(f_ref, f_min, approximant);
+ 
+    switch (approximant)
+    {
+        /* non-spinning inspiral-only models */
+        case TaylorEt:
+            /* Waveform-specific sanity checks */
+            if( !XLALSimInspiralWaveformFlagsIsDefault(waveFlags) )
+                ABORT_NONDEFAULT_WAVEFORM_FLAGS(waveFlags);
+            if( !checkSpinsZero(S1x, S1y, S1z, S2x, S2y, S2z) )
+                ABORT_NONZERO_SPINS(waveFlags);
+            if( !checkTidesZero(lambda1, lambda2) )
+                 ABORT_NONZERO_TIDES(waveFlags);
             if( f_ref != 0.)
-                XLALPrintWarning("XLAL Warning - %s: This approximant does use f_ref. The reference phase will be defined at coalescence.\n", __func__);
+                 XLALPrintWarning("XLAL Warning - %s: This approximant does use f_ref. The reference phase will be defined at coalescence.\n", __func__);
             /* Call the waveform driver routine */
             ret = XLALSimInspiralTaylorEtPNGenerator(hplus, hcross, phiRef, v0,
-                    deltaT, m1, m2, f_min, distance, inclination, amplitudeO, phaseO);
+                    deltaT, m1, m2, f_min, r, i, amplitudeO, phaseO);
             break;
+
 
         case TaylorT1:
             /* Waveform-specific sanity checks */
@@ -4852,6 +4972,7 @@ int XLALSimInspiralGetSpinSupportFromApproximant(Approximant approx){
     case SpinTaylorT3:
     case IMRPhenomP:
     case IMRPhenomPv2:
+    case IMRPhenomPv2_NRTidal:
     case SpinTaylorT2Fourier:
     case SpinTaylorT4Fourier:
     case SpinDominatedWf:
